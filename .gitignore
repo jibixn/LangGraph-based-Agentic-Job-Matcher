@@ -52,3 +52,6 @@ candidate_report.md
 # Model/cache files
 .cache/
 .huggingface/
+
+
+resources/
