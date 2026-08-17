@@ -1,12 +1,12 @@
 # Agentic Profile Matching System
 
-A resume screening and profile matching system built with **LangGraph, LangChain, ChromaDB, Hugging Face embeddings, and Groq LLMs**.
+A resume screening and profile matching system built with **LangGraph, LangChain, ChromaDB, Hugging Face embeddings, and an LLM**.
 
-The system reads a Job Description (JD), extracts its requirements, retrieves relevant resume information using semantic search, evaluates candidates against the requirements, and generates a ranked candidate report.
+The system reads a Job Description (JD), extracts its requirements, retrieves relevant resume information using semantic search, evaluates candidates against the requirements, and uses an **agentic feedback loop with tool calling and human approval** to refine candidate selection and ranking.
 
 ## Overview
 
-The application is designed to automate the initial stages of a recruitment workflow.
+The application is designed to automate the initial stages of a recruitment workflow while allowing a human reviewer to iteratively guide the agent.
 
 Given a Job Description and a collection of resumes, the system:
 
@@ -15,53 +15,78 @@ Given a Job Description and a collection of resumes, the system:
 3. Searches a ChromaDB vector store for relevant resume information.
 4. Evaluates retrieved candidates against the Job Description.
 5. Produces structured candidate evaluations.
-6. Generates a final ranked report for the top candidates.
-
-The current implementation uses a deterministic LangGraph workflow. Agentic tool selection and human-feedback loops can be added as future extensions.
+6. Presents the candidate evaluation to a human reviewer.
+7. Uses human feedback to determine whether to retrieve more candidates or re-rank existing candidates.
+8. Uses RAG retrieval tools through an LLM-powered agent when additional candidates are required.
+9. Re-ranks candidates based on reviewer feedback when necessary.
+10. Generates a final ranked report after human approval.
 
 ## Architecture
 
 ```text
-                    Job Description
+## Architecture
+
+```text
+                         Start
                            |
                            v
-                    +-------------+
-                    |   Parse JD  |
-                    +-------------+
+                      +----------+
+                      | Parse JD |
+                      +----------+
                            |
                            v
-                  +-------------------+
-                  | Extract Requirements|
-                  |       (LLM)        |
-                  +-------------------+
+                +----------------------+
+                | extract requirements |
+                +----------------------+
                            |
                            v
-                  +-------------------+
-                  |   Search Resumes  |
-                  |     (RAG Tool)    |
-                  +-------------------+
+                    +---------------+
+                    | Search Resume |
+                    +---------------+
                            |
                            v
-                  +-------------------+
-                  |  Rank Candidates  |
-                  |       (LLM)       |
-                  +-------------------+
-                           |
-                           v
-                  +-------------------+
-                  |  Generate Report  |
-                  |       (LLM)       |
-                  +-------------------+
-                           |
-                           v
-                         END
+                    +----------------+
+                    | extract text   |
+                    |  from chunks   |<--------------------+
+                    +----------------+                     |
+                           |                               |
+                           v                               |
+                    +----------------+                     |
+                    |  select resume |                     |
+                    +----------------+                     |
+                           |                               |
+                           v                               |
+                      +----------+                         |
+    +---------------->| approval |                         |
+    |                 +----+-----+                         |
+    |                      |                               |
+    |            +---------+---------+                     |
+    |            |                   |                     |
+    |         APPROVED            REJECTED                 |
+    |            |                   |                     |
+    |            v                   v                     |
+    |       +---------+          +---------+               |
+    |       |  output |          |  agent  |               |
+    |       +---------+          +----+----+               |
+    |           |                     |                    |
+    |           v            +--------+--------+           |
+    |          END           |                 |           |
+    |                      RERANK           RETRIEVE       |
+    |                        |                 |           |
+    |                        v                 v           |
+    |                  +-----------+    +-------------+    |
+    +------------------|rank_resumes|   |retrieve_more|    |
+                       +-----+-----+    +------+------+    |
+                                               |           |
+                                               v           |
+                                          +---------+      |
+                                          |  tool   |------|
+                                          +----+----+
+                   
+
 ```
 
-
-
-
 ## Project Structure
-
 
 ```text
 Agentic_Profile_Matching/
@@ -123,7 +148,7 @@ pip install -r requirements.txt
 Create a `.env` file:
 
 ```env
-GROQ_API_KEY=your_groq_api_key
+API_KEY=your_api_key
 ```
 
 Do not commit `.env` to GitHub.
@@ -158,17 +183,37 @@ Then run:
 python main.py
 ```
 
-The system will process the Job Description, retrieve relevant resume information, evaluate candidates, and generate a candidate ranking report.
+The system will process the Job Description, retrieve relevant resume information, evaluate candidates, and enter a human-in-the-loop review cycle.
+
+The reviewer can provide feedback such as:
+
+```text
+Are there any other candidates?
+```
+
+or:
+
+```text
+Prioritize Java.
+```
+
+The agent then determines whether to retrieve additional candidates or re-rank the existing candidates.
+
+The workflow ends when the reviewer approves the results with:
+
+```text
+yes
+```
 
 ## Resume Ingestion
 
 Resume ingestion only needs to be performed when new resumes are added or existing resumes are modified.
 
-
+The resumes are converted into LangChain `Document` objects, semantically chunked, embedded using Hugging Face embeddings, and stored in ChromaDB for retrieval.
 
 ## Planned Agentic Architecture
 
-The final version can move from a deterministic workflow to an agentic workflow:
+The current implementation already includes an agentic feedback loop with RAG tool selection and human approval:
 
 ```text
                     +----------------+
@@ -177,45 +222,52 @@ The final version can move from a deterministic workflow to an agentic workflow:
                     +-------+--------+
                             |
               +-------------+-------------+
-              |             |             |
-              v             v             v
-        RAG Search   Candidate Compare   Interview
-           Tool           Tool           Questions
-              |             |             |
+              |                           |
+              v                           v
+        Retrieve More                 Re-rank
+              |                           |
+              v                           v
+       +-------------+             +-------------+
+       |   RAG Tool  |             | Rank Resume |
+       |   Selection |             |    (LLM)    |
+       +------+------+             +------+------+
+              |                           |
+              v                           |
+        Tool Node                         |
+              |                           |
+              v                           |
+       Vector Store                       |
+              |                           |
               +-------------+-------------+
                             |
                             v
-                     Candidate State
+                    Candidate State
                             |
                             v
-                         Ranking
-                            |
-                            v
-                         Report
-                            |
-                            v
-                    Human Feedback
+                    Human Approval
                             |
                  +----------+----------+
                  |                     |
                Accept                Modify
                  |                     |
                  v                     v
-                END                 Re-rank
+                END              Agent Decision
+                                      |
+                                      +------> Retrieve More
+                                      |
+                                      +------> Re-rank
 ```
 
-This architecture supports conversational requests such as:
+The system supports conversational requests such as:
 
 ```text
-Find candidates with React and 3+ years experience.
+Are there any other candidates?
 
-Compare the top 3 candidates.
+Prioritize Java.
 
-Why did Candidate A rank higher than Candidate B?
+Get me the top 5 candidates.
 
-Make Laravel a mandatory requirement.
-
-Generate screening questions for Candidate A.
+Re-rank the candidates based on the feedback.
 ```
 
 ## Technologies
@@ -227,15 +279,12 @@ Generate screening questions for Candidate A.
 * Hugging Face
 * Sentence Transformers
 * Semantic Chunking
-* Groq
+* LLM Tool Calling
 * Pydantic
 * PyPDF
 
 ## Future Improvements
 
-* Agentic tool selection
-* Human-in-the-loop approval
-* Conversational memory
 * Candidate comparison
 * Interview question generation
 * Multi-round screening
